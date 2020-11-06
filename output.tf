@@ -15,7 +15,7 @@
 # }
 
 output "vCenter_FQDN" {
-  value = "vcva.packet.local"
+  value = format("vcva.%s", var.domain_name)
 }
 
 output "vCenter_Username" {

@@ -1,4 +1,4 @@
-# VMware on Packet
+# VMware on Equinix Metal
 This repo has Terraform plans to deploy a multi-node vSphere cluster with vSan enabled on Packet. Follow this simple instructions below and you shold be able to go from zero to vSphere in 30 to 60m.
 
 ## Install Terraform 
