@@ -64,6 +64,7 @@ def CollectMultiple(content, objects, parameters, handleNotFound=True):
 
 
 # Terraform Vars
+vcenter_cluster_name = '${vcenter_cluster_name}'
 vcenter_fqdn = '${vcenter_fqdn}'
 vcenter_user = '${vcenter_user}@${vcenter_domain}'
 vcenter_pass = '${vcenter_pass}'
@@ -82,7 +83,7 @@ context.verify_mode = ssl.CERT_NONE
 
 
 si = connect.SmartConnectNoSSL(host=vcenter_fqdn, user=vcenter_user, pwd=vcenter_pass, port=443)
-cluster = getClusterInstance('Packet-1', si)
+cluster = getClusterInstance(vcenter_cluster_name, si)
 vcMos = vsanapiutils.GetVsanVcMos(si._stub, context=context)
 vsanClusterSystem = vcMos['vsan-cluster-config-system']
 vsanVcDiskManagementSystem = vcMos['vsan-disk-management-system']

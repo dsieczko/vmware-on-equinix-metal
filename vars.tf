@@ -1,12 +1,29 @@
-variable "auth_token" {
-}
-
-variable "organization_id" {
-}
-
-variable "project_name" {
-  default = "vmware-on-packet-1"
-}
+variable "auth_token" {}
+variable "organization_id" {}
+variable "public_ips_cidr" {}
+variable "project_id" {}
+variable "ssh_private_key_path" {}
+variable "router_hostname" {}
+variable "esxi_hostname" {}
+variable "router_size" {}
+variable "esxi_size" {}
+variable "facility" {}
+variable "router_os" {}
+variable "vmware_os" {}
+variable "billing_cycle" {}
+variable "esxi_host_count" {}
+variable "vcenter_portgroup_name" {}
+variable "domain_name" {}
+variable "vpn_user" {}
+variable "vcenter_datacenter_name" {}
+variable "vcenter_cluster_name" {}
+variable "vcenter_domain" {}
+variable "vcenter_user_name" {}
+variable "s3_url" {}
+variable "s3_bucket_name" {}
+variable "s3_access_key" {}
+variable "s3_secret_key" {}
+variable "vcenter_iso_name" {}
 
 /*
 Valid vsphere_service_types are:
@@ -27,7 +44,7 @@ variable "private_subnets" {
     {
       "name" : "VM Private Net 1",
       "nat" : true,
-      "vsphere_service_type" : "management",
+      "vsphere_service_type" : null,
       "routable" : true,
       "cidr" : "172.16.0.0/24"
     },
@@ -53,88 +70,9 @@ variable "public_subnets" {
     {
       "name" : "VM Public Net 1",
       "nat" : false,
-      "vsphere_service_type" : null,
+      "vsphere_service_type" : "management",
       "routable" : true,
       "ip_count" : 4
     }
   ]
-}
-
-variable "router_hostname" {
-  default = "edge-gateway01"
-}
-
-variable "esxi_hostname" {
-  default = "esx"
-}
-
-variable "router_size" {
-  default = "c3.small.x86"
-}
-
-variable "esxi_size" {
-  default = "c3.medium.x86"
-}
-
-variable "facility" {
-  default = "dfw2"
-}
-
-variable "router_os" {
-  default = "ubuntu_18_04"
-}
-
-variable "vmware_os" {
-  default = "vmware_esxi_7_0"
-}
-
-variable "billing_cycle" {
-  default = "hourly"
-}
-
-variable "esxi_host_count" {
-  default = 3
-}
-
-variable "vcenter_portgroup_name" {
-  default = "VM Private Net 1"
-}
-
-variable "domain_name" {
-  default = "packet.local"
-}
-
-variable "vpn_user" {
-  default = "vm_admin"
-}
-
-variable "vcenter_datacenter_name" {
-  default = "Packet"
-}
-
-variable "vcenter_cluster_name" {
-  default = "Packet-1"
-}
-
-variable "vcenter_domain" {
-  default = "vsphere.local"
-}
-
-variable "vcenter_user_name" {
-  default = "Administrator"
-}
-
-variable "s3_url" {
-}
-
-variable "s3_bucket_name" {
-}
-
-variable "s3_access_key" {
-}
-
-variable "s3_secret_key" {
-}
-
-variable "vcenter_iso_name" {
 }

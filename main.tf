@@ -2,48 +2,30 @@ provider "packet" {
   auth_token = var.auth_token
 }
 
-resource "packet_project" "new_project" {
-  name            = var.project_name
-  organization_id = var.organization_id
-}
-
-resource "tls_private_key" "ssh_key_pair" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-resource "packet_ssh_key" "ssh_pub_key" {
-  name       = var.project_name
-  public_key = chomp(tls_private_key.ssh_key_pair.public_key_openssh)
-}
-
-resource "packet_reserved_ip_block" "ip_blocks" {
-  count      = length(var.public_subnets)
-  project_id = packet_project.new_project.id
-  facility   = var.facility
-  quantity   = element(var.public_subnets.*.ip_count, count.index)
-}
-
+# We're requesting blocks here for each host directly since we'll delete them later.
 resource "packet_reserved_ip_block" "esx_ip_blocks" {
   count      = var.esxi_host_count
-  project_id = packet_project.new_project.id
+  project_id = var.project_id
   facility   = var.facility
   quantity   = 8
 }
 
+# Get VLANs for all of the subnets.
 resource "packet_vlan" "private_vlans" {
   count       = length(var.private_subnets)
   facility    = var.facility
-  project_id  = packet_project.new_project.id
+  project_id  = var.project_id
   description = jsonencode(element(var.private_subnets.*.name, count.index))
 }
 
 resource "packet_vlan" "public_vlans" {
   count       = length(var.public_subnets)
   facility    = var.facility
-  project_id  = packet_project.new_project.id
+  project_id  = var.project_id
   description = jsonencode(element(var.public_subnets.*.name, count.index))
 }
+
+# Create and setup our edge router.
 data "template_file" "user_data" {
   template = file("${path.module}/templates/user_data.py")
   vars = {
@@ -51,23 +33,25 @@ data "template_file" "user_data" {
     private_vlans   = jsonencode(packet_vlan.private_vlans.*.vxlan)
     public_subnets  = jsonencode(var.public_subnets)
     public_vlans    = jsonencode(packet_vlan.public_vlans.*.vxlan)
-    public_cidrs    = jsonencode(packet_reserved_ip_block.ip_blocks.*.cidr_notation)
+    public_cidrs    = jsonencode(var.public_ips_cidr)
     domain_name     = var.domain_name
   }
-}
+} 
 
 resource "packet_device" "router" {
-  depends_on = [
-    packet_ssh_key.ssh_pub_key
-  ]
   hostname         = var.router_hostname
   plan             = var.router_size
   facilities       = [var.facility]
   operating_system = var.router_os
   billing_cycle    = var.billing_cycle
-  project_id       = packet_project.new_project.id
+  project_id       = var.project_id
   user_data        = data.template_file.user_data.rendered
-  network_type     = "hybrid"
+}
+
+resource "packet_device_network_type" "router" {
+  device_id = packet_device.router.id
+  type = "hybrid"
+  depends_on = [packet_device.router]
 }
 
 resource "packet_port_vlan_attachment" "router_priv_vlan_attach" {
@@ -75,6 +59,7 @@ resource "packet_port_vlan_attachment" "router_priv_vlan_attach" {
   device_id = packet_device.router.id
   port_name = "eth1"
   vlan_vnid = element(packet_vlan.private_vlans.*.vxlan, count.index)
+  depends_on = [packet_device_network_type.router]
 }
 
 resource "packet_port_vlan_attachment" "router_pub_vlan_attach" {
@@ -82,13 +67,16 @@ resource "packet_port_vlan_attachment" "router_pub_vlan_attach" {
   device_id = packet_device.router.id
   port_name = "eth1"
   vlan_vnid = element(packet_vlan.public_vlans.*.vxlan, count.index)
+  depends_on = [packet_device_network_type.router]
 }
 
 resource "packet_ip_attachment" "block_assignment" {
-  count         = length(packet_reserved_ip_block.ip_blocks)
+  count         = length(var.public_ips_cidr)
   device_id     = packet_device.router.id
-  cidr_notation = element(packet_reserved_ip_block.ip_blocks.*.cidr_notation, count.index)
+  cidr_notation = element(var.public_ips_cidr, count.index)
 }
+
+# Create and setup our ESXi hosts.
 resource "packet_device" "esxi_hosts" {
   count            = var.esxi_host_count
   hostname         = format("%s%02d", var.esxi_hostname, count.index + 1)
@@ -96,8 +84,8 @@ resource "packet_device" "esxi_hosts" {
   facilities       = [var.facility]
   operating_system = var.vmware_os
   billing_cycle    = var.billing_cycle
-  project_id       = packet_project.new_project.id
-  network_type     = "hybrid"
+  project_id       = var.project_id
+  
   ip_address {
     type            = "public_ipv4"
     cidr            = 29
@@ -111,21 +99,30 @@ resource "packet_device" "esxi_hosts" {
   }
 }
 
+resource "packet_device_network_type" "esxi_hosts" {
+  count = var.esxi_host_count
+  device_id = element(packet_device.esxi_hosts.*.id, count.index)
+  type = "hybrid"
+  depends_on = [packet_device.esxi_hosts]
+}
 
 resource "packet_port_vlan_attachment" "esxi_priv_vlan_attach" {
   count     = length(packet_device.esxi_hosts) * length(packet_vlan.private_vlans)
   device_id = element(packet_device.esxi_hosts.*.id, ceil(count.index / length(packet_vlan.private_vlans)))
   port_name = "eth1"
   vlan_vnid = element(packet_vlan.private_vlans.*.vxlan, count.index)
+  depends_on = [packet_device_network_type.esxi_hosts]
 }
-
 
 resource "packet_port_vlan_attachment" "esxi_pub_vlan_attach" {
   count     = length(packet_device.esxi_hosts) * length(packet_vlan.public_vlans)
   device_id = element(packet_device.esxi_hosts.*.id, ceil(count.index / length(packet_vlan.public_vlans)))
   port_name = "eth1"
   vlan_vnid = element(packet_vlan.public_vlans.*.vxlan, count.index)
+  depends_on = [packet_device_network_type.esxi_hosts] 
 }
+
+# Setup Vcenter
 data "template_file" "download_vcenter" {
   template = file("${path.module}/templates/download_vcenter.sh")
   vars = {
@@ -141,7 +138,7 @@ resource "null_resource" "download_vcenter_iso" {
   connection {
     type        = "ssh"
     user        = "root"
-    private_key = chomp(tls_private_key.ssh_key_pair.private_key_pem)
+    private_key = file(var.ssh_private_key_path)
     host        = packet_device.router.access_public_ipv4
   }
 
@@ -158,6 +155,8 @@ resource "null_resource" "download_vcenter_iso" {
     ]
   }
 }
+
+# Setup IPSecTunnel
 resource "random_string" "ipsec_psk" {
   length           = 20
   min_upper        = 2
@@ -190,7 +189,7 @@ resource "null_resource" "install_vpn_server" {
   connection {
     type        = "ssh"
     user        = "root"
-    private_key = chomp(tls_private_key.ssh_key_pair.private_key_pem)
+    private_key = file(var.ssh_private_key_path)
     host        = packet_device.router.access_public_ipv4
   }
 
@@ -226,6 +225,7 @@ resource "random_string" "sso_password" {
   override_special = "$!?@*"
 }
 
+# Setup VCVA Template
 data "template_file" "vcva_template" {
   template = file("${path.module}/templates/vcva_template.json")
   vars = {
@@ -242,7 +242,7 @@ resource "null_resource" "copy_vcva_template" {
   connection {
     type        = "ssh"
     user        = "root"
-    private_key = chomp(tls_private_key.ssh_key_pair.private_key_pem)
+    private_key = file(var.ssh_private_key_path)
     host        = packet_device.router.access_public_ipv4
   }
   provisioner "file" {
@@ -250,11 +250,13 @@ resource "null_resource" "copy_vcva_template" {
     destination = "/root/vcva_template.json"
   }
 }
+
+# Update uplinks
 resource "null_resource" "copy_update_uplinks" {
   connection {
     type        = "ssh"
     user        = "root"
-    private_key = chomp(tls_private_key.ssh_key_pair.private_key_pem)
+    private_key = file(var.ssh_private_key_path)
     host        = packet_device.router.access_public_ipv4
   }
 
@@ -271,17 +273,18 @@ data "template_file" "esx_host_networking" {
     private_vlans   = jsonencode(packet_vlan.private_vlans.*.vxlan)
     public_subnets  = jsonencode(var.public_subnets)
     public_vlans    = jsonencode(packet_vlan.public_vlans.*.vxlan)
-    public_cidrs    = jsonencode(packet_reserved_ip_block.ip_blocks.*.cidr_notation)
+    public_cidrs    = jsonencode(var.public_ips_cidr)
     domain_name     = var.domain_name
     packet_token    = var.auth_token
   }
 }
 
+# Configure ESXi hosts networking.
 resource "null_resource" "esx_network_prereqs" {
   connection {
     type        = "ssh"
     user        = "root"
-    private_key = chomp(tls_private_key.ssh_key_pair.private_key_pem)
+    private_key = file(var.ssh_private_key_path)
     host        = packet_device.router.access_public_ipv4
   }
 
@@ -303,7 +306,7 @@ resource "null_resource" "apply_esx_network_config" {
   connection {
     type        = "ssh"
     user        = "root"
-    private_key = chomp(tls_private_key.ssh_key_pair.private_key_pem)
+    private_key = file(var.ssh_private_key_path)
     host        = packet_device.router.access_public_ipv4
   }
 
@@ -311,12 +314,14 @@ resource "null_resource" "apply_esx_network_config" {
     inline = ["python3 /root/esx_host_networking.py --host '${element(packet_device.esxi_hosts.*.access_public_ipv4, count.index)}' --user root --pass '${element(packet_device.esxi_hosts.*.root_password, count.index)}' --id '${element(packet_device.esxi_hosts.*.id, count.index)}' --index ${count.index} --ipRes ${element(packet_reserved_ip_block.esx_ip_blocks.*.id, count.index)}"]
   }
 }
+
+# Deploy VCVA and claim VSAN disks
 data "template_file" "deploy_vcva_script" {
   template = file("${path.module}/templates/deploy_vcva.py")
   vars = {
     private_subnets = jsonencode(var.private_subnets)
     public_subnets  = jsonencode(var.public_subnets)
-    public_cidrs    = jsonencode(packet_reserved_ip_block.ip_blocks.*.cidr_notation)
+    public_cidrs    = jsonencode(var.public_ips_cidr)
     vcenter_network = var.vcenter_portgroup_name
     esx_passwords   = jsonencode(packet_device.esxi_hosts.*.root_password)
     dc_name         = var.vcenter_datacenter_name
@@ -330,11 +335,12 @@ data "template_file" "deploy_vcva_script" {
 data "template_file" "claim_vsan_disks" {
   template = file("${path.module}/templates/vsan_claim.py")
   vars = {
-    vcenter_fqdn   = format("vcva.%s", var.domain_name)
-    vcenter_user   = var.vcenter_user_name
-    vcenter_domain = var.vcenter_domain
-    vcenter_pass   = random_string.sso_password.result
-    plan_type      = var.esxi_size
+    vcenter_fqdn          = format("vcva.%s", var.domain_name)
+    vcenter_user          = var.vcenter_user_name
+    vcenter_domain        = var.vcenter_domain
+    vcenter_pass          = random_string.sso_password.result
+    vcenter_cluster_name  = var.vcenter_cluster_name
+    plan_type             = var.esxi_size
   }
 }
 
@@ -343,7 +349,7 @@ resource "null_resource" "deploy_vcva" {
   connection {
     type        = "ssh"
     user        = "root"
-    private_key = chomp(tls_private_key.ssh_key_pair.private_key_pem)
+    private_key = file(var.ssh_private_key_path)
     host        = packet_device.router.access_public_ipv4
   }
 
@@ -365,4 +371,5 @@ resource "null_resource" "deploy_vcva" {
     ]
   }
 }
+
 
